@@ -129,6 +129,15 @@ button.ghost:hover { background: #242a3b; }
 .solution-body pre code {
   background: transparent; padding: 0; font-size: 12px; color: #d0d6e5;
 }
+.solution-body blockquote {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--danger);
+  background: rgba(255, 92, 122, 0.08);
+  color: #ffd4dc;
+  border-radius: 4px;
+  font-size: 12px;
+}
 
 .foot {
   display: flex; justify-content: space-between; align-items: center;

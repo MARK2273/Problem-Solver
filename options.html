@@ -38,6 +38,33 @@
           switch to another.
         </p>
 
+        <h3 class="section-title">Output preferences</h3>
+        <p class="hint">
+          Turn these off to get shorter answers and save tokens on the free tier.
+        </p>
+
+        <div class="toggle-row">
+          <div class="toggle-text">
+            <div class="toggle-label">Include comments in code</div>
+            <div class="toggle-desc">Adds inline comments inside the generated solution.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="includeComments" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div class="toggle-text">
+            <div class="toggle-label">Include explanation</div>
+            <div class="toggle-desc">Adds Understanding, Approach, Complexity, and Walkthrough sections. When off, only the code is returned.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="includeExplanation" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
         <div class="actions">
           <button id="saveBtn" class="primary">Save</button>
           <button id="testBtn" class="ghost">Test connection</button>

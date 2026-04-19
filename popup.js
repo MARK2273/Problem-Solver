@@ -127,6 +127,12 @@ function renderMarkdown(md) {
       html += `<li>${inline(text)}</li>`;
       continue;
     }
+    if (/^\s*>\s?/.test(line)) {
+      closeList();
+      const text = line.replace(/^\s*>\s?/, "");
+      html += `<blockquote>${inline(text)}</blockquote>`;
+      continue;
+    }
     if (line.trim() === "") { closeList(); continue; }
     closeList();
     html += `<p>${inline(line)}</p>`;
@@ -148,9 +154,45 @@ function renderMarkdown(md) {
   }
 }
 
+// Robustly pull code out of a Gemini response. Handles:
+//   - standard fenced blocks with/without a language tag
+//   - unterminated fences (model forgot the closing ```)
+//   - "code-only" responses with no fences at all
+//   - leading/trailing whitespace and stray prose around a single block
 function extractCodeBlock(md) {
-  const m = md.match(/```(?:\w+)?\s*\n([\s\S]*?)```/);
-  return m ? m[1].trim() : "";
+  if (!md) return "";
+  // Drop any truncation-warning blockquote the background may have appended
+  // so it never ends up on the user's clipboard.
+  const text = String(md).replace(/\n>\s*⚠️[\s\S]*$/u, "").trim();
+
+  // 1. Try a fully-fenced block (most common).
+  const fenced = text.match(/```[^\n]*\n([\s\S]*?)```/);
+  if (fenced && fenced[1].trim()) return fenced[1].replace(/\s+$/, "");
+
+  // 2. Unterminated fence: opening ``` but no closing one.
+  const openOnly = text.match(/```[^\n]*\n([\s\S]*)$/);
+  if (openOnly && openOnly[1].trim()) {
+    return openOnly[1].replace(/```+\s*$/, "").replace(/\s+$/, "");
+  }
+
+  // 3. No fences at all. If the whole response looks like code
+  //    (code-only mode, or model returned raw code), use it verbatim.
+  const trimmed = text.trim();
+  if (trimmed && looksLikeCode(trimmed)) return trimmed;
+
+  // 4. As a last resort, fall back to whatever is rendered inside a <pre><code>.
+  const pre = document.querySelector("#solutionBody pre code");
+  if (pre && pre.textContent.trim()) return pre.textContent.replace(/\s+$/, "");
+
+  return "";
+}
+
+function looksLikeCode(s) {
+  // Heuristic: lots of code-ish punctuation, or recognizable keywords,
+  // and not dominated by prose sentences.
+  if (/^#{1,6}\s/m.test(s)) return false; // has markdown headings
+  const codeSignals = /[{};]|=>|def\s|class\s|function\s|public\s|#include|import\s|console\.|print\(|return\s/;
+  return codeSignals.test(s);
 }
 
 async function onSolveClick() {
@@ -207,27 +249,65 @@ async function onSolveClick() {
     return;
   }
 
-  hideStatus();
   $("modelLabel").textContent = "Model: " + (resp.model || "gemini");
   $("solutionBody").innerHTML = renderMarkdown(resp.solution);
   $("solutionBody").dataset.raw = resp.solution;
   $("solution").classList.remove("hidden");
+
+  // If the background flagged the response as incomplete, keep a visible
+  // warning up so the user never mistakes half-code for a full solution.
+  if (/Warning:\s*The response appears incomplete/i.test(resp.solution)) {
+    setStatus(
+      "Response was incomplete and could not be fully recovered. See the warning below the solution.",
+      "error"
+    );
+  } else {
+    hideStatus();
+  }
 }
 
 function onCopyCode() {
   const md = $("solutionBody").dataset.raw || "";
+  if (!md.trim()) {
+    setStatus("Nothing to copy yet — generate a solution first.", "error");
+    return;
+  }
+
   const code = extractCodeBlock(md);
-  if (!code) { setStatus("No code block found in solution.", "error"); return; }
+
+  // Fallback: if we still couldn't isolate a code block, copy the whole
+  // response so the user isn't stuck, and tell them why.
+  if (!code) {
+    navigator.clipboard.writeText(md).then(() => {
+      setStatus(
+        "Couldn't detect a code block — copied the full response instead.",
+        "info"
+      );
+      setTimeout(hideStatus, 2500);
+    }).catch((e) => {
+      setStatus("Copy failed: " + e.message, "error");
+    });
+    return;
+  }
+
   navigator.clipboard.writeText(code).then(() => {
     setStatus("Code copied to clipboard.", "info");
     setTimeout(hideStatus, 1500);
+  }).catch((e) => {
+    setStatus("Copy failed: " + e.message, "error");
   });
 }
 function onCopyAll() {
   const md = $("solutionBody").dataset.raw || "";
+  if (!md.trim()) {
+    setStatus("Nothing to copy yet — generate a solution first.", "error");
+    return;
+  }
   navigator.clipboard.writeText(md).then(() => {
     setStatus("Full solution copied.", "info");
     setTimeout(hideStatus, 1500);
+  }).catch((e) => {
+    setStatus("Copy failed: " + e.message, "error");
   });
 }
 

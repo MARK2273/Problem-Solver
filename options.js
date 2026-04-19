@@ -8,19 +8,32 @@ function setStatus(msg, ok = true) {
 }
 
 function load() {
-  chrome.storage.sync.get(["apiKey", "model"], (items) => {
-    if (items.apiKey) $("apiKey").value = items.apiKey;
-    if (items.model) $("model").value = items.model;
-  });
+  chrome.storage.sync.get(
+    ["apiKey", "model", "includeComments", "includeExplanation"],
+    (items) => {
+      if (items.apiKey) $("apiKey").value = items.apiKey;
+      if (items.model) $("model").value = items.model;
+      // Defaults: both ON for backwards-compatible behavior.
+      $("includeComments").checked =
+        items.includeComments === undefined ? true : !!items.includeComments;
+      $("includeExplanation").checked =
+        items.includeExplanation === undefined ? true : !!items.includeExplanation;
+    }
+  );
 }
 
 function save() {
   const apiKey = $("apiKey").value.trim();
   const model = $("model").value;
+  const includeComments = $("includeComments").checked;
+  const includeExplanation = $("includeExplanation").checked;
   if (!apiKey) { setStatus("API key is required.", false); return; }
-  chrome.storage.sync.set({ apiKey, model }, () => {
-    setStatus("Saved.");
-  });
+  chrome.storage.sync.set(
+    { apiKey, model, includeComments, includeExplanation },
+    () => {
+      setStatus("Saved.");
+    }
+  );
 }
 
 async function testConnection() {
