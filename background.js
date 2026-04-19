@@ -110,6 +110,96 @@ function buildPrompt({ title, body, platform, url, language }, opts = {}) {
   ]).join("\n");
 }
 
+// Build a prompt asking Gemini to FIX/IMPROVE a previous solution.
+// `previousCode` is the code we sent last time (just the code, no markdown).
+// `errorText` is whatever the user pasted: compile error, runtime error,
+// WA with failing test case, TLE message, etc. It may be empty.
+function buildFixPrompt({ title, body, platform, url, language }, opts, ctx) {
+  const { includeComments = true, includeExplanation = true } = opts || {};
+  const { previousCode = "", errorText = "" } = ctx || {};
+  const lang = language || "Python";
+
+  const commentRule = includeComments
+    ? `- Include concise, useful inline comments inside the code.`
+    : `- Do NOT include any comments inside the code. No inline comments, no docstrings, no header comments. Output only pure ${lang} code.`;
+
+  const header = [
+    `You are an expert competitive programmer and debugger.`,
+    `A user submitted a solution to a problem on "${platform}" (${url}) and it did not work.`,
+    `Your job is to CAREFULLY analyze the previous code and the error/failure report,`,
+    `identify the root cause, and return an IMPROVED, CORRECT solution.`,
+    ``,
+    `Problem title: ${title}`,
+    ``,
+    `Problem statement:`,
+    `"""`,
+    body || "(No problem text was extracted.)",
+    `"""`,
+    ``,
+    `Previous ${lang} code the user submitted:`,
+    "```" + lang.toLowerCase(),
+    previousCode || "(empty)",
+    "```",
+    ``,
+    `Error / failure report from the judge (may include compile errors,`,
+    `runtime errors, stack traces, wrong-answer test cases with expected vs`,
+    `actual output, TLE/MLE messages, or the user's own description):`,
+    `"""`,
+    errorText || "(No specific error text was provided — review the code for correctness and edge cases, and produce a fixed version.)",
+    `"""`,
+    ``,
+    `Diagnosis and fix guidelines:`,
+    `- Read the error carefully. If it names a failing test case, make the new code handle it.`,
+    `- If it is a compile/syntax error, fix the exact location mentioned.`,
+    `- If it is TLE, choose a more efficient algorithm (mention the new complexity).`,
+    `- If it is WA, reason about edge cases (empty input, duplicates, overflow, off-by-one, negatives, large N).`,
+    `- Do NOT produce the same buggy code again — the fix must be real and justified.`,
+    `- Preserve the same function/class signature expected by the platform (e.g. LeetCode's Solution class).`,
+    ``
+  ];
+
+  if (includeExplanation) {
+    return header.concat([
+      `Respond in clean Markdown with these exact sections:`,
+      `## Diagnosis`,
+      `- What was wrong with the previous code and why it failed.`,
+      ``,
+      `## Fix`,
+      `- What you changed and why it resolves the issue.`,
+      ``,
+      `## Complexity`,
+      `- Time and space complexity of the new solution.`,
+      ``,
+      `## Solution (${lang})`,
+      "```" + lang.toLowerCase(),
+      `// Corrected, ready-to-submit ${lang} solution.`,
+      "```",
+      ``,
+      `Rules:`,
+      `- Produce only ONE code block, inside the "Solution" section.`,
+      `- The new code MUST be different from the previous code and MUST address the reported error.`,
+      `- Code must be complete and compilable/runnable on the target platform.`,
+      commentRule
+    ]).join("\n");
+  }
+
+  // Code-only fix mode.
+  return header.concat([
+    `Respond with ONLY a single fenced Markdown code block containing the CORRECTED ${lang} solution.`,
+    `No prose, no headings, no text before or after the code block.`,
+    ``,
+    "```" + lang.toLowerCase(),
+    `// Corrected ${lang} solution.`,
+    "```",
+    ``,
+    `Rules:`,
+    `- Output exactly ONE fenced code block and nothing else.`,
+    `- The new code MUST be different from the previous code and MUST address the reported error.`,
+    `- Always close the code block with triple backticks.`,
+    commentRule
+  ]).join("\n");
+}
+
 // One raw call to Gemini. Returns { text, finishReason }.
 async function callGeminiOnce({ apiKey, model, contents, maxOutputTokens }) {
   const endpoint =
@@ -226,7 +316,7 @@ async function callGemini({ apiKey, model, prompt }) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === "SOLVE_PROBLEM") {
+  if (msg && (msg.type === "SOLVE_PROBLEM" || msg.type === "FIX_PROBLEM")) {
     (async () => {
       try {
         const { apiKey, model, includeComments, includeExplanation } = await getConfig();
@@ -238,12 +328,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
           return;
         }
-        const prompt = buildPrompt(msg.payload, { includeComments, includeExplanation });
-        const solution = await callGemini({
-          apiKey,
-          model,
-          prompt
-        });
+
+        let prompt;
+        if (msg.type === "FIX_PROBLEM") {
+          prompt = buildFixPrompt(
+            msg.payload,
+            { includeComments, includeExplanation },
+            { previousCode: msg.payload.previousCode, errorText: msg.payload.errorText }
+          );
+        } else {
+          prompt = buildPrompt(msg.payload, { includeComments, includeExplanation });
+        }
+
+        const solution = await callGemini({ apiKey, model, prompt });
         sendResponse({ ok: true, solution, model });
       } catch (err) {
         sendResponse({ ok: false, error: String(err.message || err) });

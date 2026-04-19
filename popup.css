@@ -43,12 +43,16 @@ html, body {
 .title { font-weight: 700; font-size: 14px; }
 .subtitle { color: var(--muted); font-size: 11px; }
 
+.topbar-actions { display: flex; gap: 6px; align-items: center; }
+
 .icon-btn {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 8px; width: 32px; height: 32px;
-  cursor: pointer;
+  color: var(--text); border-radius: 8px; height: 32px;
+  min-width: 32px; padding: 0 10px;
+  cursor: pointer; font-size: 12px;
 }
 .icon-btn:hover { background: var(--panel-2); }
+#newBtn { font-weight: 600; }
 
 .controls {
   display: flex; gap: 8px; padding: 12px 14px;
@@ -137,6 +141,49 @@ button.ghost:hover { background: #242a3b; }
   color: #ffd4dc;
   border-radius: 4px;
   font-size: 12px;
+}
+
+.fix-panel {
+  margin-top: 12px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.fix-label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 6px;
+}
+.fix-panel textarea {
+  width: 100%;
+  background: var(--code-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+.fix-panel textarea:focus { border-color: var(--accent); }
+.fix-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+button.primary.small {
+  padding: 6px 12px;
+  font-size: 12px;
+  flex: initial;
+  align-self: auto;
 }
 
 .foot {

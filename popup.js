@@ -77,6 +77,75 @@ async function solveWithGemini(payload) {
   });
 }
 
+async function fixWithGemini(payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "FIX_PROBLEM", payload },
+      (resp) => resolve(resp || { ok: false, error: "No response from background." })
+    );
+  });
+}
+
+// Holds the last successful solve so "Fix / Improve" can reference it.
+// Persisted to chrome.storage.local keyed per-problem so closing/reopening
+// the popup (or coming back after copying an error from the judge) keeps
+// the context intact.
+const lastSolve = {
+  title: null,
+  body: null,
+  platform: null,
+  url: null,
+  language: null,
+  solution: null, // raw markdown from Gemini
+  code: null      // extracted code only
+};
+
+// Build a stable storage key for a problem URL. We strip query strings and
+// hashes so e.g. LeetCode's "?envType=..." variants still share memory.
+function solveKeyFromUrl(url) {
+  try {
+    const u = new URL(url);
+    return "solve:" + u.hostname + u.pathname.replace(/\/+$/, "");
+  } catch {
+    return "solve:unknown";
+  }
+}
+
+async function persistLastSolve() {
+  if (!lastSolve.url) return;
+  const key = solveKeyFromUrl(lastSolve.url);
+  return new Promise((resolve) => {
+    chrome.storage.local.set(
+      { [key]: { ...lastSolve, savedAt: Date.now() } },
+      resolve
+    );
+  });
+}
+
+async function loadLastSolveForUrl(url) {
+  const key = solveKeyFromUrl(url);
+  return new Promise((resolve) => {
+    chrome.storage.local.get([key], (items) => resolve(items[key] || null));
+  });
+}
+
+async function clearLastSolveForUrl(url) {
+  const key = solveKeyFromUrl(url);
+  return new Promise((resolve) => {
+    chrome.storage.local.remove([key], resolve);
+  });
+}
+
+function resetLastSolve() {
+  lastSolve.title = null;
+  lastSolve.body = null;
+  lastSolve.platform = null;
+  lastSolve.url = null;
+  lastSolve.language = null;
+  lastSolve.solution = null;
+  lastSolve.code = null;
+}
+
 // Minimal, safe Markdown -> HTML renderer (no external libs).
 function renderMarkdown(md) {
   const esc = (s) =>
@@ -249,14 +318,64 @@ async function onSolveClick() {
     return;
   }
 
+  await renderSolution(resp, {
+    title: probData.title,
+    body: probData.body,
+    platform: probData.platform,
+    url: probData.url,
+    language
+  });
+}
+
+// Render a Gemini response, remember it as the "last solve", auto-copy code,
+// and surface any incompleteness warning. Shared by solve and fix flows.
+async function renderSolution(resp, ctx) {
   $("modelLabel").textContent = "Model: " + (resp.model || "gemini");
   $("solutionBody").innerHTML = renderMarkdown(resp.solution);
   $("solutionBody").dataset.raw = resp.solution;
   $("solution").classList.remove("hidden");
 
-  // If the background flagged the response as incomplete, keep a visible
-  // warning up so the user never mistakes half-code for a full solution.
-  if (/Warning:\s*The response appears incomplete/i.test(resp.solution)) {
+  const extractedCode = extractCodeBlock(resp.solution);
+  lastSolve.title = ctx.title;
+  lastSolve.body = ctx.body;
+  lastSolve.platform = ctx.platform;
+  lastSolve.url = ctx.url;
+  lastSolve.language = ctx.language;
+  lastSolve.solution = resp.solution;
+  lastSolve.code = extractedCode;
+
+  // Persist so closing/reopening the popup (or copying an error from the
+  // judge and coming back) doesn't wipe the Fix / Improve context.
+  persistLastSolve();
+
+  // Reset the fix panel state on each new render.
+  $("fixPanel").classList.add("hidden");
+  $("fixError").value = "";
+
+  // Reveal the "New" button so the user can start from scratch anytime.
+  $("newBtn").classList.remove("hidden");
+
+  const incomplete = /Warning:\s*The response appears incomplete/i.test(resp.solution);
+
+  const { autoCopyCode } = await getPrefs(["autoCopyCode"]);
+  if (autoCopyCode && extractedCode) {
+    try {
+      await navigator.clipboard.writeText(extractedCode);
+      setStatus(
+        incomplete
+          ? "Code auto-copied, but the response was incomplete — check the warning below."
+          : "Code auto-copied to clipboard — paste it into your editor.",
+        incomplete ? "error" : "info"
+      );
+      if (!incomplete) setTimeout(hideStatus, 2500);
+      return;
+    } catch (e) {
+      setStatus("Auto-copy failed: " + e.message + ". Use the Copy code button.", "error");
+      return;
+    }
+  }
+
+  if (incomplete) {
     setStatus(
       "Response was incomplete and could not be fully recovered. See the warning below the solution.",
       "error"
@@ -264,6 +383,23 @@ async function onSolveClick() {
   } else {
     hideStatus();
   }
+}
+
+// Helper: read prefs from chrome.storage with sensible defaults.
+function getPrefs(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(keys, (items) => {
+      const out = {};
+      for (const k of keys) {
+        if (k === "autoCopyCode") {
+          out[k] = items[k] === undefined ? true : !!items[k];
+        } else {
+          out[k] = items[k];
+        }
+      }
+      resolve(out);
+    });
+  });
 }
 
 function onCopyCode() {
@@ -311,6 +447,117 @@ function onCopyAll() {
   });
 }
 
+function onToggleFixPanel() {
+  if (!lastSolve.solution) {
+    setStatus("Generate a solution first, then you can ask for a fix.", "error");
+    return;
+  }
+  const panel = $("fixPanel");
+  const willOpen = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden");
+  if (willOpen) {
+    $("fixError").focus();
+  }
+}
+
+function onCancelFix() {
+  $("fixPanel").classList.add("hidden");
+  $("fixError").value = "";
+}
+
+async function onSubmitFix() {
+  if (!lastSolve.solution || !lastSolve.code) {
+    setStatus("No previous solution to fix. Generate one first.", "error");
+    return;
+  }
+
+  const errorText = $("fixError").value.trim();
+  $("fixSubmitBtn").disabled = true;
+  $("fixCancelBtn").disabled = true;
+  setStatus(`<span class="spinner"></span> Analyzing error & improving the code…`, "info");
+
+  const resp = await fixWithGemini({
+    title: lastSolve.title,
+    body: lastSolve.body,
+    platform: lastSolve.platform,
+    url: lastSolve.url,
+    language: lastSolve.language,
+    previousCode: lastSolve.code,
+    errorText
+  });
+
+  $("fixSubmitBtn").disabled = false;
+  $("fixCancelBtn").disabled = false;
+
+  if (!resp.ok) {
+    setStatus("Error: " + resp.error, "error");
+    return;
+  }
+
+  await renderSolution(resp, {
+    title: lastSolve.title,
+    body: lastSolve.body,
+    platform: lastSolve.platform,
+    url: lastSolve.url,
+    language: lastSolve.language
+  });
+}
+
+// Restore a previously-generated solution for the current problem URL so
+// the user can keep iterating (Fix / Improve) across popup close/reopen.
+async function restoreSolutionForTab(tab) {
+  if (!tab || !tab.url) return;
+  const saved = await loadLastSolveForUrl(tab.url);
+  if (!saved || !saved.solution) return;
+
+  lastSolve.title = saved.title;
+  lastSolve.body = saved.body;
+  lastSolve.platform = saved.platform;
+  lastSolve.url = saved.url;
+  lastSolve.language = saved.language;
+  lastSolve.solution = saved.solution;
+  lastSolve.code = saved.code;
+
+  if (saved.language) $("language").value = saved.language;
+
+  $("problemTitle").textContent = saved.title || "Untitled";
+  $("problemBody").textContent = saved.body
+    ? saved.body.slice(0, 400) + (saved.body.length > 400 ? "…" : "")
+    : "(Problem text couldn't be auto-extracted.)";
+  $("problemPreview").classList.remove("hidden");
+
+  $("solutionBody").innerHTML = renderMarkdown(saved.solution);
+  $("solutionBody").dataset.raw = saved.solution;
+  $("solution").classList.remove("hidden");
+  $("newBtn").classList.remove("hidden");
+
+  setStatus(
+    "Restored your previous solution for this problem. Paste an error below and click Fix / Improve to iterate, or click New to start over.",
+    "info"
+  );
+  setTimeout(hideStatus, 4000);
+}
+
+async function onNewSession() {
+  const tab = await getActiveTab();
+  if (tab && tab.url) {
+    await clearLastSolveForUrl(tab.url);
+  }
+  resetLastSolve();
+
+  $("solution").classList.add("hidden");
+  $("problemPreview").classList.add("hidden");
+  $("fixPanel").classList.add("hidden");
+  $("fixError").value = "";
+  $("solutionBody").innerHTML = "";
+  $("solutionBody").dataset.raw = "";
+  $("newBtn").classList.add("hidden");
+  $("modelLabel").textContent = "Model: —";
+
+  setStatus("Cleared. Ready for a fresh solve.", "info");
+  setTimeout(hideStatus, 1500);
+}
+
 async function init() {
   const tab = await getActiveTab();
   try {
@@ -341,11 +588,18 @@ async function init() {
   $("solveBtn").addEventListener("click", onSolveClick);
   $("copyBtn").addEventListener("click", onCopyCode);
   $("copyAllBtn").addEventListener("click", onCopyAll);
+  $("fixToggleBtn").addEventListener("click", onToggleFixPanel);
+  $("fixCancelBtn").addEventListener("click", onCancelFix);
+  $("fixSubmitBtn").addEventListener("click", onSubmitFix);
+  $("newBtn").addEventListener("click", onNewSession);
   $("optionsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
   $("openOptions").addEventListener("click", (e) => {
     e.preventDefault();
     chrome.runtime.openOptionsPage();
   });
+
+  // After wiring handlers, try to restore a prior solution for this page.
+  await restoreSolutionForTab(tab);
 }
 
 document.addEventListener("DOMContentLoaded", init);

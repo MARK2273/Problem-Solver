@@ -9,15 +9,17 @@ function setStatus(msg, ok = true) {
 
 function load() {
   chrome.storage.sync.get(
-    ["apiKey", "model", "includeComments", "includeExplanation"],
+    ["apiKey", "model", "includeComments", "includeExplanation", "autoCopyCode"],
     (items) => {
       if (items.apiKey) $("apiKey").value = items.apiKey;
       if (items.model) $("model").value = items.model;
-      // Defaults: both ON for backwards-compatible behavior.
+      // Defaults: all ON so users get the most helpful behavior by default.
       $("includeComments").checked =
         items.includeComments === undefined ? true : !!items.includeComments;
       $("includeExplanation").checked =
         items.includeExplanation === undefined ? true : !!items.includeExplanation;
+      $("autoCopyCode").checked =
+        items.autoCopyCode === undefined ? true : !!items.autoCopyCode;
     }
   );
 }
@@ -27,9 +29,10 @@ function save() {
   const model = $("model").value;
   const includeComments = $("includeComments").checked;
   const includeExplanation = $("includeExplanation").checked;
+  const autoCopyCode = $("autoCopyCode").checked;
   if (!apiKey) { setStatus("API key is required.", false); return; }
   chrome.storage.sync.set(
-    { apiKey, model, includeComments, includeExplanation },
+    { apiKey, model, includeComments, includeExplanation, autoCopyCode },
     () => {
       setStatus("Saved.");
     }

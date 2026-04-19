@@ -14,7 +14,10 @@
           <div class="subtitle" id="platformLabel">Detecting platform…</div>
         </div>
       </div>
-      <button id="optionsBtn" class="icon-btn" title="Settings">⚙</button>
+      <div class="topbar-actions">
+        <button id="newBtn" class="icon-btn hidden" title="Start a new session (clears saved solution)">New</button>
+        <button id="optionsBtn" class="icon-btn" title="Settings">⚙</button>
+      </div>
     </header>
 
     <section class="controls">
@@ -46,8 +49,24 @@
       <div class="solution-actions">
         <button id="copyBtn" class="ghost">Copy code</button>
         <button id="copyAllBtn" class="ghost">Copy all</button>
+        <button id="fixToggleBtn" class="ghost">Fix / Improve</button>
       </div>
       <div id="solutionBody" class="solution-body"></div>
+
+      <div id="fixPanel" class="fix-panel hidden">
+        <label class="fix-label" for="fixError">
+          Paste the error, failing test case, or what went wrong:
+        </label>
+        <textarea
+          id="fixError"
+          rows="5"
+          placeholder="e.g. Wrong Answer on test 37: expected [1,2,3], got [1,2]. Or paste the compile/runtime error here. Leave blank to just ask for a review & fix."
+        ></textarea>
+        <div class="fix-actions">
+          <button id="fixCancelBtn" class="ghost">Cancel</button>
+          <button id="fixSubmitBtn" class="primary small">Regenerate with fix</button>
+        </div>
+      </div>
     </section>
 
     <footer class="foot">
